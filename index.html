@@ -584,6 +584,7 @@
     let points = [];
     let projectedTriangles = [];
     let activePointId = null;
+    let sectionModels = {};
 
     const viewState = {
       preset: "iso",
@@ -708,10 +709,50 @@
         ly = posMeta.axis === "y" ? posMeta.value : section.height / 2;
       }
 
+      // Addition middle override for joists F and beyond:
+      // F-G-H follow a steeper diagonal from the actual middle,
+      // I-N flatten to about half that slope while staying continuous.
+      if (sectionKey === "addition" && posKey === "middle") {
+        const fIdx = section.joists.indexOf("F");
+        const hIdx = section.joists.indexOf("H");
+        const idx = section.joists.indexOf(joist);
+        if (idx >= fIdx && fIdx >= 0 && hIdx >= 0) {
+          const xF = joistCoordinate(sectionKey, "F");
+          const yMid = section.height / 2;
+
+          if (idx <= hIdx) {
+            // Start exactly at true middle on F, then run steeper diagonal.
+            ly = yMid - (lx - xF);
+          } else {
+            const xH = joistCoordinate(sectionKey, "H");
+            const yH = yMid - (xH - xF);
+            // Flatter continuation (about y=0.5x trend in centered coordinates).
+            ly = yH - 0.5 * (lx - xH);
+          }
+
+          ly = Math.max(0.75, Math.min(section.height - 0.75, ly));
+        }
+      }
+
       // Main "near stairs" readings from Tare 1 are offset about 3 ft to the right
       // relative to the current near-sun-room baseline placement.
       if (sectionKey === "main" && posKey === "nearStairs" && setupName === "Tare 1") {
-        lx = Math.min(section.width - 0.5, lx + 3);
+        const shiftedX = Math.min(section.width - 0.5, lx + 3);
+
+        // For A/B/C, run a diagonal from A's top-left anchor to C's stair anchor.
+        const idx = section.joists.indexOf(joist);
+        const idxA = section.joists.indexOf("A");
+        const idxC = section.joists.indexOf("C");
+        if (idxA >= 0 && idxC >= 0 && idx >= idxA && idx <= idxC) {
+          const yA = joistCoordinate(sectionKey, "A");
+          const yC = joistCoordinate(sectionKey, "C");
+          const xA = section.positions.nearStairs.value;
+          const xC = Math.min(section.width - 0.5, xA + 3);
+          const t = (ly - yA) / Math.max(1e-9, (yC - yA));
+          lx = xA + (xC - xA) * Math.max(0, Math.min(1, t));
+        } else {
+          lx = shiftedX;
+        }
       }
 
       return { x: section.x + lx, y: section.y + ly, lx, ly };
@@ -751,6 +792,7 @@
                 section: sectionKey,
                 sectionName: section.name,
                 joist,
+                joistIndex: section.joists.indexOf(joist),
                 posKey: k,
                 posLabel: section.positions[k] ? section.positions[k].label : k,
                 raw: String(v),
@@ -760,6 +802,7 @@
                 y: pos.y,
                 lx: pos.lx,
                 ly: pos.ly,
+                alongCoord: section.rowAxis === "y" ? pos.lx : pos.ly,
                 deviationRaw,
                 deviation: deviationRaw,
                 uncertainty: unc,
@@ -850,6 +893,202 @@
       return den ? num / den : 0;
     }
 
+    function buildSectionModels() {
+      const out = {};
+
+      for (const [sectionKey] of Object.entries(HOUSE.sections)) {
+        const sectionPoints = points.filter(p => p.section === sectionKey && Number.isFinite(p.joistIndex));
+        const byJoist = new Map();
+
+        for (const p of sectionPoints) {
+          if (!byJoist.has(p.joistIndex)) byJoist.set(p.joistIndex, []);
+          byJoist.get(p.joistIndex).push({ s: p.alongCoord, z: p.deviation });
+        }
+
+        const joists = [];
+        for (const [idx, arr] of byJoist.entries()) {
+          arr.sort((a, b) => a.s - b.s);
+
+          const merged = [];
+          for (const smp of arr) {
+            const last = merged[merged.length - 1];
+            if (!last || Math.abs(last.s - smp.s) > 1e-6) {
+              merged.push({ s: smp.s, z: smp.z, n: 1 });
+            } else {
+              last.z = ((last.z * last.n) + smp.z) / (last.n + 1);
+              last.n += 1;
+            }
+          }
+
+          joists.push({ idx, samples: merged });
+        }
+
+        joists.sort((a, b) => a.idx - b.idx);
+        out[sectionKey] = { joists };
+      }
+
+      return out;
+    }
+
+    function evalJoistAt(joistModel, s) {
+      const samples = joistModel.samples;
+      if (!samples.length) return null;
+
+      if (samples.length === 1) {
+        // One-point joists still provide local support around that sampled position.
+        const onePointBandFt = 3.0;
+        if (Math.abs(s - samples[0].s) <= onePointBandFt) {
+          return { z: samples[0].z, strength: 0.68 };
+        }
+        return null;
+      }
+
+      for (let i = 0; i < samples.length - 1; i++) {
+        const a = samples[i];
+        const b = samples[i + 1];
+        if (s >= a.s && s <= b.s) {
+          const t = (s - a.s) / Math.max(1e-9, (b.s - a.s));
+          return { z: lerp(a.z, b.z, t), strength: 1 };
+        }
+      }
+
+      // Allow limited extrapolation only where slope is established.
+      const maxExtrapFt = 3.25;
+      if (s < samples[0].s) {
+        const a = samples[0];
+        const b = samples[1];
+        if ((a.s - s) > maxExtrapFt) return null;
+        const slope = (b.z - a.z) / Math.max(1e-9, (b.s - a.s));
+        return { z: a.z + slope * (s - a.s), strength: 0.75 };
+      }
+
+      const a = samples[samples.length - 2];
+      const b = samples[samples.length - 1];
+      if ((s - b.s) > maxExtrapFt) return null;
+      const slope = (b.z - a.z) / Math.max(1e-9, (b.s - a.s));
+      return { z: b.z + slope * (s - b.s), strength: 0.75 };
+    }
+
+    function fitCrossJoistTrend(samples, targetU) {
+      if (!samples || samples.length < 2) return null;
+
+      let sw = 0;
+      let sx = 0;
+      let sy = 0;
+      for (const s of samples) {
+        const locality = 1 / (1 + (s.d * 0.45));
+        const w = Math.max(1e-6, (s.strength || 1) * locality);
+        sw += w;
+        sx += s.idx * w;
+        sy += s.z * w;
+      }
+      if (sw <= 1e-9) return null;
+
+      const mx = sx / sw;
+      const my = sy / sw;
+
+      let sxx = 0;
+      let sxy = 0;
+      for (const s of samples) {
+        const locality = 1 / (1 + (s.d * 0.45));
+        const w = Math.max(1e-6, (s.strength || 1) * locality);
+        const dx = s.idx - mx;
+        const dy = s.z - my;
+        sxx += w * dx * dx;
+        sxy += w * dx * dy;
+      }
+
+      if (sxx <= 1e-9) {
+        return { z: my, slope: 0 };
+      }
+
+      const m = sxy / sxx;
+      const b = my - (m * mx);
+      return { z: (m * targetU) + b, slope: m };
+    }
+
+    function evaluateSectionSurface(sectionKey, x, y) {
+      const section = HOUSE.sections[sectionKey];
+      const model = sectionModels[sectionKey];
+      if (!section || !model) return null;
+
+      const spacing = 16 / 12;
+      const alongRowsDim = section.rowAxis === "y" ? section.height : section.width;
+      const span = (section.joists.length - 1) * spacing;
+      const margin = (alongRowsDim - span) / 2;
+
+      const rowCoord = section.rowAxis === "y" ? (y - section.y) : (x - section.x);
+      const along = section.rowAxis === "y" ? (x - section.x) : (y - section.y);
+      const u = (rowCoord - margin) / spacing;
+
+      const available = [];
+      for (const jm of model.joists) {
+        const evalRes = evalJoistAt(jm, along);
+        if (!evalRes) continue;
+        const d = Math.abs(jm.idx - u);
+        available.push({ idx: jm.idx, d, z: evalRes.z, strength: evalRes.strength });
+      }
+
+      if (!available.length) return null;
+
+      const exact = available.find(v => v.d < 0.08);
+      if (exact) return exact.z;
+
+      const maxAcrossJoists = 6.0;
+      const nearby = available.filter(v => v.d <= maxAcrossJoists).sort((a, b) => a.d - b.d);
+
+      const trendCandidates = available
+        .filter(v => v.d <= 8.0)
+        .sort((a, b) => a.d - b.d)
+        .slice(0, 10);
+
+      const trend = fitCrossJoistTrend(trendCandidates, u);
+
+      if (!nearby.length) {
+        if (!trend) return null;
+        const minIdx = Math.min(...trendCandidates.map(v => v.idx));
+        const maxIdx = Math.max(...trendCandidates.map(v => v.idx));
+        // Continue trend only modestly beyond supported joist range.
+        if (u < minIdx - 1.6 || u > maxIdx + 1.6) return null;
+        return trend.z;
+      }
+
+      if (nearby.length === 1) {
+        if (nearby[0].d <= 1.2) return nearby[0].z;
+        if (trend) return (0.25 * nearby[0].z) + (0.75 * trend.z);
+        return null;
+      }
+
+      let num = 0;
+      let den = 0;
+      for (let i = 0; i < Math.min(6, nearby.length); i++) {
+        const v = nearby[i];
+        const w = (v.strength || 1) / ((v.d * v.d) + 0.08);
+        num += v.z * w;
+        den += w;
+      }
+
+      const nearValue = den > 0 ? (num / den) : null;
+      if (nearValue == null) return trend ? trend.z : null;
+
+      if (!trend) return nearValue;
+
+      const closestD = nearby[0].d;
+      const trendWeight = Math.max(0.18, Math.min(0.82, closestD / 4.5));
+      return ((1 - trendWeight) * nearValue) + (trendWeight * trend.z);
+    }
+
+    function evaluateSurface(x, y) {
+      for (const [sectionKey, section] of Object.entries(HOUSE.sections)) {
+        if (inSection(x, y, section)) {
+          const z = evaluateSectionSurface(sectionKey, x, y);
+          if (z == null) return null;
+          return { z, sectionKey };
+        }
+      }
+      return null;
+    }
+
     function getDeviationRange(samplePoints) {
       let min = Infinity;
       let max = -Infinity;
@@ -908,7 +1147,6 @@
       overlaySvg.setAttribute("width", String(w));
       overlaySvg.setAttribute("height", String(h));
 
-      const pwr = parseFloat(powerInput.value);
       const opacity = parseFloat(opacityInput.value);
       const tf = makeTransform(w, h);
       const { min, max } = getDeviationRange(points);
@@ -921,8 +1159,9 @@
         for (let px = 0; px < w; px += step) {
           const world = tf.toWorld(px, py);
           if (!pointInsideHouse(world.x, world.y)) continue;
-          const z = idw(world.x, world.y, pwr, points);
-          ctx.fillStyle = colorFor(z, min, max, opacity);
+          const sample = evaluateSurface(world.x, world.y);
+          if (!sample) continue;
+          ctx.fillStyle = colorFor(sample.z, min, max, opacity);
           ctx.fillRect(px, py, step, step);
         }
       }
@@ -1521,7 +1760,6 @@
 
     function buildSurfaceTriangles() {
       projectedTriangles = [];
-      const pwr = parseFloat(powerInput.value);
       const zScale = parseFloat(zScaleInput.value);
 
       const gx = 64;
@@ -1537,8 +1775,12 @@
             row.push(null);
             continue;
           }
-          const z = idw(x, y, pwr, points);
-          row.push({ x, y, z });
+          const sample = evaluateSurface(x, y);
+          if (!sample) {
+            row.push(null);
+            continue;
+          }
+          row.push({ x, y, z: sample.z, sectionKey: sample.sectionKey });
         }
         verts.push(row);
       }
@@ -1550,8 +1792,12 @@
           const v01 = verts[yi + 1][xi];
           const v11 = verts[yi + 1][xi + 1];
 
-          if (v00 && v10 && v11) projectedTriangles.push([v00, v10, v11]);
-          if (v00 && v11 && v01) projectedTriangles.push([v00, v11, v01]);
+          if (v00 && v10 && v11 && v00.sectionKey === v10.sectionKey && v10.sectionKey === v11.sectionKey) {
+            projectedTriangles.push([v00, v10, v11]);
+          }
+          if (v00 && v11 && v01 && v00.sectionKey === v11.sectionKey && v11.sectionKey === v01.sectionKey) {
+            projectedTriangles.push([v00, v11, v01]);
+          }
         }
       }
 
@@ -1729,6 +1975,7 @@
     function rebuild() {
       const builtInfo = buildPoints();
       points = builtInfo.built;
+      sectionModels = buildSectionModels();
       refreshLabels(builtInfo.autoOffset);
       buildTable();
       drawHeatmap();
