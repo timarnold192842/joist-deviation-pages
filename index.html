@@ -358,6 +358,9 @@
 
           <div class="row"><span>Tare-2 alignment offset</span><span class="mono" id="offsetLabel"></span></div>
           <input id="offset" type="range" min="-1" max="1" step="0.01" value="0" />
+
+          <div class="row"><span>Max gradient labels</span><span class="mono" id="gradCountLabel"></span></div>
+          <input id="gradCount" type="range" min="0" max="12" step="1" value="7" />
         </section>
       </details>
 
@@ -575,16 +578,19 @@
     const powerInput = document.getElementById("power");
     const zScaleInput = document.getElementById("zScale");
     const offsetInput = document.getElementById("offset");
+    const gradCountInput = document.getElementById("gradCount");
 
     const opacityLabel = document.getElementById("opacityLabel");
     const powerLabel = document.getElementById("powerLabel");
     const zScaleLabel = document.getElementById("zScaleLabel");
     const offsetLabel = document.getElementById("offsetLabel");
+    const gradCountLabel = document.getElementById("gradCountLabel");
 
     let points = [];
     let projectedTriangles = [];
     let activePointId = null;
     let sectionModels = {};
+    let overlayLabelRects = [];
 
     const viewState = {
       preset: "iso",
@@ -1182,8 +1188,137 @@
       return el;
     }
 
+    function rectsOverlap(a, b, pad = 1.5) {
+      return !(
+        (a.x + a.w + pad) < b.x ||
+        (b.x + b.w + pad) < a.x ||
+        (a.y + a.h + pad) < b.y ||
+        (b.y + b.h + pad) < a.y
+      );
+    }
+
+    function clampRectToViewport(rect, viewportW, viewportH, margin = 2) {
+      const x = Math.max(margin, Math.min(rect.x, viewportW - rect.w - margin));
+      const y = Math.max(margin, Math.min(rect.y, viewportH - rect.h - margin));
+      return { x, y, w: rect.w, h: rect.h };
+    }
+
+    function isRectAvailable(rect) {
+      for (const used of overlayLabelRects) {
+        if (rectsOverlap(rect, used)) return false;
+      }
+      return true;
+    }
+
+    function nearestPointOnRect(rect, p) {
+      const x = Math.max(rect.x, Math.min(p.x, rect.x + rect.w));
+      const y = Math.max(rect.y, Math.min(p.y, rect.y + rect.h));
+      return { x, y };
+    }
+
+    function drawSmartLabel(opts) {
+      const {
+        text,
+        anchorX,
+        anchorY,
+        candidates,
+        textAttrs = {},
+        boxPadX = 4,
+        boxPadY = 2,
+        boxStyle = {},
+        lineFrom = null
+      } = opts;
+
+      const viewW = heatCanvas.width;
+      const viewH = heatCanvas.height;
+
+      let chosen = null;
+      let firstFallback = null;
+
+      for (const cand of candidates) {
+        const tx = anchorX + (cand.dx || 0);
+        const ty = anchorY + (cand.dy || 0);
+        const tattrs = {
+          x: tx,
+          y: ty,
+          fill: "#111",
+          "font-size": 9,
+          "font-weight": 700,
+          "pointer-events": "none",
+          ...(cand.textAttrs || {}),
+          ...textAttrs
+        };
+
+        const ghost = mkSvg("text", tattrs);
+        ghost.textContent = text;
+        overlaySvg.appendChild(ghost);
+        const bb = ghost.getBBox();
+        overlaySvg.removeChild(ghost);
+
+        let rect = {
+          x: bb.x - boxPadX,
+          y: bb.y - boxPadY,
+          w: bb.width + (boxPadX * 2),
+          h: bb.height + (boxPadY * 2)
+        };
+        rect = clampRectToViewport(rect, viewW, viewH, 2);
+
+        const placement = { rect, textX: tx + (rect.x - (bb.x - boxPadX)), textY: ty + (rect.y - (bb.y - boxPadY)), attrs: tattrs };
+        if (!firstFallback) firstFallback = placement;
+
+        if (isRectAvailable(rect)) {
+          chosen = placement;
+          break;
+        }
+      }
+
+      if (!chosen) chosen = firstFallback;
+      if (!chosen) return null;
+
+      const box = mkSvg("rect", {
+        x: chosen.rect.x,
+        y: chosen.rect.y,
+        width: chosen.rect.w,
+        height: chosen.rect.h,
+        rx: 3,
+        ry: 3,
+        fill: "rgba(255,255,255,0.9)",
+        stroke: "#1e1e1e",
+        "stroke-width": 0.7,
+        "pointer-events": "none",
+        ...boxStyle
+      });
+      overlaySvg.appendChild(box);
+
+      const txt = mkSvg("text", {
+        ...chosen.attrs,
+        x: chosen.textX,
+        y: chosen.textY
+      });
+      txt.textContent = text;
+      overlaySvg.appendChild(txt);
+
+      if (lineFrom) {
+        const hit = nearestPointOnRect(chosen.rect, lineFrom);
+        const line = mkSvg("line", {
+          x1: lineFrom.x,
+          y1: lineFrom.y,
+          x2: hit.x,
+          y2: hit.y,
+          stroke: "#2c2c2c",
+          "stroke-width": 0.8,
+          "pointer-events": "none"
+        });
+        overlaySvg.appendChild(line);
+      }
+
+      overlayLabelRects.push(chosen.rect);
+      return chosen.rect;
+    }
+
     function drawOverlay(tf, min, max) {
       clearChildren(overlaySvg);
+      overlayLabelRects = [];
 
       const sectionVariation = getSectionVariations();
 
@@ -1249,8 +1384,108 @@
       }
 
       drawBoundaryDifferenceLabels(tf);
-
       drawExtremaAnnotations(tf);
+      drawSteepDerivativeAnnotations(tf);
+    }
+
+    function getSteepDerivativePairs() {
+      const bySection = new Map();
+      for (const p of points) {
+        if (!bySection.has(p.section)) bySection.set(p.section, []);
+        bySection.get(p.section).push(p);
+      }
+
+      const candidates = [];
+      const minDistFt = 0.2;
+      const maxDistFt = 4.0;
+
+      for (const sectionPoints of bySection.values()) {
+        for (let i = 0; i < sectionPoints.length; i++) {
+          for (let j = i + 1; j < sectionPoints.length; j++) {
+            const a = sectionPoints[i];
+            const b = sectionPoints[j];
+            const dx = a.x - b.x;
+            const dy = a.y - b.y;
+            const distFt = Math.sqrt((dx * dx) + (dy * dy));
+            if (distFt < minDistFt || distFt > maxDistFt) continue;
+
+            const delta = Math.abs(a.deviation - b.deviation);
+            const slope = delta / distFt;
+
+            candidates.push({
+              a,
+              b,
+              distFt,
+              distIn: distFt * 12,
+              delta,
+              slope
+            });
+          }
+        }
+      }
+
+      candidates.sort((p, q) => {
+        if (q.slope !== p.slope) return q.slope - p.slope;
+        return q.delta - p.delta;
+      });
+
+      // Keep strongest local transitions while avoiding heavy visual clutter.
+      const selected = [];
+      const usage = new Map();
+      const maxPerPoint = 2;
+      const maxLabels = Math.max(0, Math.floor(parseFloat(gradCountInput.value) || 0));
+
+      for (const c of candidates) {
+        if (selected.length >= maxLabels) break;
+        const ua = usage.get(c.a.id) || 0;
+        const ub = usage.get(c.b.id) || 0;
+        if (ua >= maxPerPoint || ub >= maxPerPoint) continue;
+        selected.push(c);
+        usage.set(c.a.id, ua + 1);
+        usage.set(c.b.id, ub + 1);
+      }
+
+      return selected;
+    }
+
+    function drawSteepDerivativeAnnotations(tf) {
+      const pairs = getSteepDerivativePairs();
+
+      for (const pair of pairs) {
+        const a = tf.toScreen(pair.a.x, pair.a.y);
+        const b = tf.toScreen(pair.b.x, pair.b.y);
+        const mx = (a.x + b.x) / 2;
+        const my = (a.y + b.y) / 2;
+
+        const line = mkSvg("line", {
+          x1: a.x,
+          y1: a.y,
+          x2: b.x,
+          y2: b.y,
+          stroke: "rgba(20,20,20,0.88)",
+          "stroke-width": 1.2,
+          "stroke-dasharray": "4 2",
+          "pointer-events": "none"
+        });
+        overlaySvg.appendChild(line);
+
+        const labelText = `${pair.delta.toFixed(2)}\" over ${pair.distIn.toFixed(0)}\"`;
+        drawSmartLabel({
+          text: labelText,
+          anchorX: mx,
+          anchorY: my,
+          candidates: [
+            { dx: 6, dy: -6 },
+            { dx: 6, dy: 10 },
+            { dx: -58, dy: -6 },
+            { dx: -58, dy: 10 },
+            { dx: 0, dy: -16 }
+          ],
+          textAttrs: { "font-size": 9, "font-weight": 700 },
+          boxStyle: { fill: "rgba(255,255,255,0.92)" },
+          lineFrom: { x: mx, y: my }
+        });
+      }
     }
 
     function getSectionCenterSummary(sectionKey) {
@@ -1289,46 +1524,24 @@
 
       for (const pair of pairs) {
         const anchor = tf.toScreen(pair.worldX, pair.worldY);
-        const tx = anchor.x + pair.dx;
-        const ty = anchor.y + pair.dy;
-
-        const txt = mkSvg("text", {
-          x: tx,
-          y: ty,
-          "font-size": 10,
-          "font-weight": 700,
-          "text-anchor": pair.align === "middle" ? "middle" : "start",
-          fill: "#111",
-          "pointer-events": "none"
+        drawSmartLabel({
+          text: pair.text,
+          anchorX: anchor.x,
+          anchorY: anchor.y,
+          candidates: [
+            { dx: pair.dx || 0, dy: pair.dy || 0, textAttrs: { "text-anchor": pair.align === "middle" ? "middle" : "start" } },
+            { dx: (pair.dx || 0) + 16, dy: (pair.dy || 0) + 6 },
+            { dx: (pair.dx || 0) - 16, dy: (pair.dy || 0) - 6 },
+            { dx: (pair.dx || 0), dy: (pair.dy || 0) + 16 },
+            { dx: (pair.dx || 0), dy: (pair.dy || 0) - 16 }
+          ],
+          textAttrs: {
+            "font-size": 10,
+            "font-weight": 700
+          },
+          boxStyle: { fill: "rgba(255,255,255,0.9)" },
+          lineFrom: { x: anchor.x, y: anchor.y }
         });
-        txt.textContent = pair.text;
-
-        overlaySvg.appendChild(txt);
-        const bb = txt.getBBox();
-        const box = mkSvg("rect", {
-          x: bb.x - 4,
-          y: bb.y - 2,
-          width: bb.width + 8,
-          height: bb.height + 4,
-          rx: 3,
-          ry: 3,
-          fill: "rgba(255,255,255,0.9)",
-          stroke: "#1e1e1e",
-          "stroke-width": 0.7,
-          "pointer-events": "none"
-        });
-        overlaySvg.insertBefore(box, txt);
-
-        const line = mkSvg("line", {
-          x1: anchor.x,
-          y1: anchor.y,
-          x2: Math.max(bb.x, Math.min(anchor.x, bb.x + bb.width)),
-          y2: bb.y + (bb.height / 2),
-          stroke: "#2c2c2c",
-          "stroke-width": 0.8,
-          "pointer-events": "none"
-        });
-        overlaySvg.insertBefore(line, box);
       }
     }
 
@@ -1503,38 +1716,27 @@
         overlaySvg.appendChild(ring);
 
         const labelText = `${p.deviation.toFixed(2)}\"`;
-        const lx = s.x + 10;
-        const ly = s.y - 18;
-
-        const txt = mkSvg("text", {
-          x: lx,
-          y: ly,
-          "font-size": 9.2,
-          fill: "#111",
-          "font-weight": 600,
-          "pointer-events": "none"
+        drawSmartLabel({
+          text: labelText,
+          anchorX: s.x,
+          anchorY: s.y,
+          candidates: [
+            { dx: 10, dy: -18 },
+            { dx: 10, dy: 12 },
+            { dx: -36, dy: -18 },
+            { dx: -36, dy: 12 },
+            { dx: 0, dy: -24 },
+            { dx: 0, dy: 20 }
+          ],
+          textAttrs: {
+            "font-size": 9.2,
+            "font-weight": 600
+          },
+          boxPadX: 4,
+          boxPadY: 2,
+          boxStyle: { fill: "rgba(255,255,255,0.88)", "stroke-width": 0.8 },
+          lineFrom: { x: s.x, y: s.y }
         });
-        txt.textContent = labelText;
-
-        // Measure rendered text so label box can hug content tightly.
-        overlaySvg.appendChild(txt);
-        const bb = txt.getBBox();
-        const padX = 4;
-        const padY = 2;
-
-        const box = mkSvg("rect", {
-          x: bb.x - padX,
-          y: bb.y - padY,
-          width: bb.width + (padX * 2),
-          height: bb.height + (padY * 2),
-          rx: 3,
-          ry: 3,
-          fill: "rgba(255,255,255,0.88)",
-          stroke: "#1e1e1e",
-          "stroke-width": 0.8,
-          "pointer-events": "none"
-        });
-        overlaySvg.insertBefore(box, txt);
       }
     }
 
@@ -1970,6 +2172,7 @@
       zScaleLabel.textContent = `${parseFloat(zScaleInput.value).toFixed(1)}x`;
       const eff = autoOffset + parseFloat(offsetInput.value);
       offsetLabel.textContent = `${eff.toFixed(3)}\"`;
+      gradCountLabel.textContent = `${Math.floor(parseFloat(gradCountInput.value) || 0)}`;
     }
 
     function rebuild() {
@@ -1988,6 +2191,7 @@
       drawSurface3D();
     });
     offsetInput.addEventListener("input", rebuild);
+    gradCountInput.addEventListener("input", rebuild);
 
     window.addEventListener("resize", drawHeatmap);
 
