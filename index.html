@@ -1,0 +1,1756 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Floor Joist Deviation Visualizer</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg: #f3efe6;
+      --panel: #fffdfa;
+      --ink: #22211d;
+      --muted: #6e685d;
+      --line: #d8d0c0;
+      --main: rgba(120, 207, 209, 0.22);
+      --add: rgba(214, 122, 215, 0.22);
+      --kitchen: rgba(176, 172, 170, 0.22);
+      --accent: #0d5f95;
+      --good: #166443;
+      --bad: #8a2f26;
+      --shadow: 0 10px 28px rgba(63, 46, 20, 0.15);
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      font-family: "IBM Plex Sans", sans-serif;
+      background:
+        radial-gradient(circle at 0% 0%, rgba(255, 255, 255, 0.78) 0, rgba(255, 255, 255, 0) 42%),
+        linear-gradient(130deg, #f5f0e6 0%, #efe8db 46%, #e7e5df 100%);
+      color: var(--ink);
+    }
+
+    .shell {
+      max-width: 1500px;
+      margin: 18px auto;
+      padding: 0 14px 18px;
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 14px;
+    }
+
+    .card {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      box-shadow: var(--shadow);
+    }
+
+    .left-col {
+      display: grid;
+      gap: 14px;
+      align-content: start;
+      grid-template-columns: minmax(320px, 1fr) minmax(320px, 1fr);
+    }
+
+    .title-card {
+      padding: 14px;
+    }
+
+    .title-card h1 {
+      margin: 0 0 8px;
+      font-size: 1.22rem;
+      line-height: 1.2;
+      letter-spacing: 0.01em;
+    }
+
+    .title-card p {
+      margin: 0;
+      font-size: 0.92rem;
+      color: var(--muted);
+      line-height: 1.35;
+    }
+
+    .legend {
+      margin-top: 10px;
+      display: grid;
+      gap: 6px;
+      font-size: 0.84rem;
+    }
+
+    .legend-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .swatch {
+      width: 14px;
+      height: 14px;
+      border: 1px solid #787878;
+      border-radius: 3px;
+    }
+
+    .sw-main { background: var(--main); }
+    .sw-add { background: var(--add); }
+    .sw-kitchen { background: var(--kitchen); }
+
+    .settings {
+      padding: 14px;
+      display: grid;
+      gap: 10px;
+      font-size: 0.9rem;
+    }
+
+    .settings-menu {
+      overflow: hidden;
+    }
+
+    .settings-menu > summary {
+      list-style: none;
+      cursor: pointer;
+      padding: 12px 14px;
+      font-size: 0.92rem;
+      font-weight: 600;
+      letter-spacing: 0.01em;
+      color: #2d2a24;
+      border-bottom: 1px solid var(--line);
+      background: #f9f5ec;
+      user-select: none;
+    }
+
+    .settings-menu > summary::-webkit-details-marker {
+      display: none;
+    }
+
+    .settings-menu > summary::after {
+      content: "+";
+      float: right;
+      color: #4f4a40;
+      font-weight: 700;
+    }
+
+    .settings-menu[open] > summary::after {
+      content: "-";
+    }
+
+    .row {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 8px;
+      align-items: center;
+    }
+
+    input[type="range"] {
+      width: 100%;
+    }
+
+    .mono {
+      font-family: "IBM Plex Mono", monospace;
+      font-size: 0.86rem;
+    }
+
+    .stats {
+      padding: 14px;
+    }
+
+    .stats h2, .table-card h2 {
+      margin: 0 0 8px;
+      font-size: 1rem;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      color: #453f35;
+    }
+
+    .stats pre {
+      margin: 0;
+      white-space: pre-wrap;
+      font-family: "IBM Plex Mono", monospace;
+      font-size: 0.8rem;
+      line-height: 1.45;
+    }
+
+    .main-col {
+      display: grid;
+      gap: 14px;
+      align-content: start;
+    }
+
+    .top-pair {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 360px;
+      gap: 14px;
+      align-items: start;
+    }
+
+    .viz {
+      padding: 10px;
+    }
+
+    .map-wrap {
+      position: relative;
+      width: min(100%, 560px);
+      margin: 0 auto;
+      /* Overall footprint extents are 36 ft x 39 ft; keep display ratio true to plan. */
+      aspect-ratio: 36 / 39;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: #f2f2f2;
+      overflow: hidden;
+    }
+
+    #heatCanvas, #overlaySvg {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      display: block;
+    }
+
+    #overlaySvg {
+      overflow: visible;
+    }
+
+    .tooltip {
+      position: fixed;
+      pointer-events: none;
+      z-index: 40;
+      background: rgba(28, 26, 22, 0.95);
+      color: #fff;
+      border-radius: 6px;
+      padding: 6px 8px;
+      font-size: 0.74rem;
+      font-family: "IBM Plex Mono", monospace;
+      transform: none;
+      white-space: nowrap;
+      display: none;
+    }
+
+    .view3d {
+      padding: 10px;
+      display: grid;
+      gap: 8px;
+    }
+
+    .view-buttons {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+
+    button {
+      border: 1px solid #9cb5c7;
+      background: #e9f2f8;
+      color: #16374d;
+      border-radius: 8px;
+      padding: 6px 10px;
+      font: inherit;
+      font-size: 0.86rem;
+      cursor: pointer;
+    }
+
+    button:hover { background: #dbeaf5; }
+
+    #surfaceCanvas {
+      width: 100%;
+      height: 320px;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      display: block;
+      background: linear-gradient(180deg, #e8ecef 0%, #f8f5ef 100%);
+    }
+
+    .table-card {
+      padding: 8px;
+      overflow: hidden;
+      width: 100%;
+      max-width: 360px;
+      justify-self: end;
+    }
+
+    .table-wrap {
+      max-height: 620px;
+      overflow: auto;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fff;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.74rem;
+      min-width: 720px;
+    }
+
+    th, td {
+      border-bottom: 1px solid #ece6da;
+      padding: 5px 6px;
+      text-align: left;
+      white-space: nowrap;
+    }
+
+    th {
+      position: sticky;
+      top: 0;
+      z-index: 1;
+      background: #f7f3eb;
+      font-weight: 600;
+      color: #4a443a;
+    }
+
+    tbody tr:hover {
+      background: #edf8ff;
+    }
+
+    tbody tr.active {
+      background: #d3ecff;
+      outline: 1px solid #7cb1d4;
+      outline-offset: -1px;
+    }
+
+    .footnote {
+      margin-top: 8px;
+      font-size: 0.76rem;
+      color: var(--muted);
+      line-height: 1.4;
+    }
+
+    @media (max-width: 1100px) {
+      .left-col {
+        grid-template-columns: 1fr;
+      }
+
+      .top-pair {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <div class="left-col">
+      <section class="card title-card">
+        <h1>Floor Joist Height Deviation Map</h1>
+        <p>Overhead and 3D interpolation from two laser setups (tares), with section-aware geometry from your footprint image.</p>
+        <div class="legend">
+          <div class="legend-row"><span class="swatch sw-main"></span> Main (18x29 ft)</div>
+          <div class="legend-row"><span class="swatch sw-add"></span> Addition / A1 (18x29 ft)</div>
+          <div class="legend-row"><span class="swatch sw-kitchen"></span> Kitchen / A2 (18x10 ft)</div>
+        </div>
+      </section>
+
+      <details class="card settings-menu">
+        <summary>Display And Calibration Options</summary>
+        <section class="settings">
+          <div class="row"><span>Heat opacity</span><span class="mono" id="opacityLabel"></span></div>
+          <input id="opacity" type="range" min="0" max="1" step="0.02" value="0.72" />
+
+          <div class="row"><span>IDW power</span><span class="mono" id="powerLabel"></span></div>
+          <input id="power" type="range" min="1" max="4" step="0.1" value="2" />
+
+          <div class="row"><span>3D vertical exaggeration</span><span class="mono" id="zScaleLabel"></span></div>
+          <input id="zScale" type="range" min="2" max="16" step="0.5" value="8" />
+
+          <div class="row"><span>Tare-2 alignment offset</span><span class="mono" id="offsetLabel"></span></div>
+          <input id="offset" type="range" min="-1" max="1" step="0.01" value="0" />
+        </section>
+      </details>
+
+    </div>
+
+    <div class="main-col">
+      <div class="top-pair">
+        <section class="card viz">
+          <div class="map-wrap" id="mapWrap">
+            <canvas id="heatCanvas"></canvas>
+            <svg id="overlaySvg"></svg>
+          </div>
+          <div class="footnote">
+            Heat surface uses inverse-distance interpolation from measured points. Dot colors and values are deviation estimates in \" after tare normalization and overlap alignment. Top-down plan is rendered at 1:1 x/y scale using the 36 ft x 39 ft footprint extents.
+          </div>
+        </section>
+
+        <section class="card table-card">
+          <h2>Measurement Table (hover to link map dots)</h2>
+          <div class="table-wrap" id="tableWrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>#</th>
+                  <th>Setup</th>
+                  <th>Section</th>
+                  <th>Joist</th>
+                  <th>Position</th>
+                  <th>Raw</th>
+                  <th>Reading Mean (")</th>
+                  <th>Deviation (")</th>
+                  <th>Uncertainty (")</th>
+                  <th>X (ft)</th>
+                  <th>Y (ft)</th>
+                </tr>
+              </thead>
+              <tbody id="measureBody"></tbody>
+            </table>
+          </div>
+        </section>
+      </div>
+
+      <section class="card view3d">
+        <div class="view-buttons">
+          <button data-view="iso">3D Isometric</button>
+          <button data-view="top">3D Top</button>
+          <button data-view="sideX">3D Side X</button>
+          <button data-view="sideY">3D Side Y</button>
+        </div>
+        <canvas id="surfaceCanvas" width="1100" height="320"></canvas>
+      </section>
+    </div>
+  </div>
+
+  <div id="tooltip" class="tooltip"></div>
+
+  <script>
+    const HOUSE = {
+      sections: {
+        main: {
+          name: "Main",
+          x: 0,
+          y: 0,
+          width: 18,
+          height: 29,
+          fill: "var(--main)",
+          rowAxis: "y",
+          joists: ["A", "B", "C", "DD", "E", "F", "G", "HH", "I", "J", "KK", "L", "M", "N", "O", "P", "Q", "R", "S"],
+          positions: {
+            nearStairs: { label: "Near stairs", value: 0.75, axis: "x" },
+            middle: { label: "Middle", value: 9, axis: "x" },
+            nearAddition: { label: "Near addition", value: 17.25, axis: "x" }
+          }
+        },
+        addition: {
+          name: "Addition (A1)",
+          x: 18,
+          y: 0,
+          width: 18,
+          height: 29,
+          fill: "var(--add)",
+          rowAxis: "x",
+          joists: ["AA", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K", "L", "M", "N"],
+          positions: {
+            nearPorch: { label: "Near porch", value: 0.75, axis: "y" },
+            middle: { label: "Middle", value: 14.5, axis: "y" },
+            nearAC: { label: "Near AC", value: 28.25, axis: "y" }
+          }
+        },
+        kitchen: {
+          name: "Kitchen (A2)",
+          x: 0,
+          y: 29,
+          width: 18,
+          height: 10,
+          fill: "var(--kitchen)",
+          rowAxis: "x",
+          joists: ["A", "B", "C", "D", "E", "FF", "G", "H", "I", "J", "K", "LL", "M", "N"],
+          positions: {
+            nearMain: { label: "Near main", value: 0.75, axis: "y" },
+            middle: { label: "Middle", value: 5, axis: "y" },
+            nearRear: { label: "Near rear", value: 9.25, axis: "y" }
+          }
+        }
+      },
+      bounds: { width: 36, height: 39 }
+    };
+
+    const RAW_DATA = [
+      {
+        setup: "Tare 1",
+        tareRaw: "5.25",
+        tareLocation: "D near stairs",
+        sectionRows: {
+          main: [
+            { joist: "A", nearStairs: "4.5-4.75", nearAddition: "5" },
+            { joist: "B", nearStairs: "4.75", nearAddition: "5" },
+            { joist: "C", nearStairs: "4.5-4.75", nearAddition: "5" },
+            { joist: "DD", nearStairs: "5", nearAddition: "4.5" },
+            { joist: "E", nearStairs: ">5", nearAddition: "4.5" },
+            { joist: "F", nearStairs: "5.25", nearAddition: "4.75" },
+            { joist: "G", nearStairs: "5.25", nearAddition: "4.75-5" },
+            { joist: "HH", nearStairs: "5.25", nearAddition: "<5" },
+            { joist: "I", nearStairs: "5", nearAddition: "4.75" },
+            { joist: "J", nearStairs: "4.75-5" },
+            { joist: "KK", nearStairs: "4.5" },
+            { joist: "L", nearStairs: "4.5" },
+            { joist: "M", nearStairs: "4.75" },
+            { joist: "N", nearStairs: "4.75" },
+            { joist: "O", nearStairs: "<5" },
+            { joist: "P", nearStairs: "5" },
+            { joist: "Q", nearStairs: "5.25" },
+            { joist: "R", nearStairs: "5.25" },
+            { joist: "S", nearStairs: "5" }
+          ],
+          addition: [
+            { joist: "AA", nearPorch: "4", middle: "4.25" },
+            { joist: "B", nearPorch: "3 7/8", middle: "4.25" },
+            { joist: "C", nearPorch: "3.75", middle: "4.25" },
+            { joist: "D", nearPorch: "3.5", middle: "4.5" },
+            { joist: "E", nearPorch: "3.75" }
+          ],
+          kitchen: [
+            { joist: "D", nearRear: ">6" },
+            { joist: "E", middle: "6.25-6.5", nearRear: "6" },
+            { joist: "FF", nearMain: "6.5", middle: "6.25", nearRear: "6" },
+            { joist: "G", nearMain: "6", middle: "6.25", nearRear: "6.5" },
+            { joist: "H", middle: "6.5", nearRear: "6.25-6.5" },
+            { joist: "I", nearRear: "6.25" }
+          ]
+        }
+      },
+      {
+        setup: "Tare 2",
+        tareRaw: "5-5.175",
+        tareLocation: "Q near middle",
+        sectionRows: {
+          main: [
+            { joist: "KK", nearStairs: "4.5", middle: "4.75" },
+            { joist: "L", nearStairs: "4.5", middle: ">4.75", nearAddition: ">4.5" },
+            { joist: "M", nearStairs: "4.5", middle: "4.75", nearAddition: "4.5" },
+            { joist: "N", nearStairs: ">4.5", middle: "4.75", nearAddition: "<4.75" },
+            { joist: "O", nearStairs: "4.75", middle: "4.75-5", nearAddition: "4.75" },
+            { joist: "P", nearStairs: "4.75", middle: ">5", nearAddition: "4.5-4.75" },
+            { joist: "Q", nearStairs: "4.75", middle: "5", nearAddition: "4.75" },
+            { joist: "R", nearStairs: "4.75", middle: ">5", nearAddition: "4.75-5" },
+            { joist: "S", nearStairs: "4.75", middle: ">5", nearAddition: "4.75-5" }
+          ],
+          kitchen: [
+            { joist: "A", nearRear: "5.75" },
+            { joist: "B", nearRear: "5.75" },
+            { joist: "C", nearRear: "6" },
+            { joist: "D", nearMain: "6.25", nearRear: "6" },
+            { joist: "E", nearMain: "6.25", nearRear: "6" },
+            { joist: "FF", nearMain: "6.25", middle: "6.25", nearRear: "6" },
+            { joist: "G", nearMain: "6.175", middle: "6.25", nearRear: "6.25" },
+            { joist: "H", nearMain: ">6", middle: "6.5", nearRear: "6.25" },
+            { joist: "I", nearMain: "6", nearRear: "6.25" },
+            { joist: "J", nearMain: "6", nearRear: "6.175" },
+            { joist: "K", nearMain: "6", nearRear: "6.175" },
+            { joist: "LL", nearMain: "6", nearRear: "6.25-6.5" },
+            { joist: "M", nearRear: "6.25" },
+            { joist: "N", nearRear: "6.5" }
+          ],
+          addition: [
+            { joist: "AA", middle: "4.25", nearAC: "3.75-4" },
+            { joist: "B", middle: "4.175", nearAC: "3.75-4" },
+            { joist: "C", middle: "4.25", nearAC: "3.75-4" },
+            { joist: "D", middle: "4.25", nearAC: "4" },
+            { joist: "E", middle: "4.5", nearAC: "3.75-4" },
+            { joist: "F", middle: "<4.5" },
+            { joist: "G", middle: "<4.5" },
+            { joist: "H", middle: "4.5" },
+            { joist: "I", middle: "4.5" },
+            { joist: "J", middle: "<4.5" },
+            { joist: "K", middle: "4.25" },
+            { joist: "L", middle: "4" },
+            { joist: "M", middle: ">4" },
+            { joist: "N", middle: "4" }
+          ]
+        }
+      }
+    ];
+
+    const mapWrap = document.getElementById("mapWrap");
+    const heatCanvas = document.getElementById("heatCanvas");
+    const overlaySvg = document.getElementById("overlaySvg");
+    const tooltip = document.getElementById("tooltip");
+    const surfaceCanvas = document.getElementById("surfaceCanvas");
+    const surfaceCtx = surfaceCanvas.getContext("2d");
+    const measureBody = document.getElementById("measureBody");
+    const tableWrap = document.getElementById("tableWrap");
+
+    const opacityInput = document.getElementById("opacity");
+    const powerInput = document.getElementById("power");
+    const zScaleInput = document.getElementById("zScale");
+    const offsetInput = document.getElementById("offset");
+
+    const opacityLabel = document.getElementById("opacityLabel");
+    const powerLabel = document.getElementById("powerLabel");
+    const zScaleLabel = document.getElementById("zScaleLabel");
+    const offsetLabel = document.getElementById("offsetLabel");
+
+    let points = [];
+    let projectedTriangles = [];
+    let activePointId = null;
+
+    const viewState = {
+      preset: "iso",
+      ax: -0.78,
+      ay: -0.72,
+      zoom: 1
+    };
+
+    const orbitState = {
+      dragging: false,
+      lastX: 0,
+      lastY: 0
+    };
+
+    function parseNumberToken(token) {
+      const t = String(token || "").trim();
+      if (!t) return null;
+      if (t.includes(" ") && t.includes("/")) {
+        const parts = t.split(/\s+/);
+        if (parts.length === 2) {
+          const whole = parseFloat(parts[0]);
+          const frac = parts[1].split("/");
+          if (!Number.isNaN(whole) && frac.length === 2) {
+            const n = parseFloat(frac[0]);
+            const d = parseFloat(frac[1]);
+            if (!Number.isNaN(n) && !Number.isNaN(d) && d !== 0) {
+              return whole + (n / d);
+            }
+          }
+        }
+      }
+      if (t.includes("/")) {
+        const frac = t.split("/");
+        if (frac.length === 2) {
+          const n = parseFloat(frac[0]);
+          const d = parseFloat(frac[1]);
+          if (!Number.isNaN(n) && !Number.isNaN(d) && d !== 0) {
+            return n / d;
+          }
+        }
+      }
+      const v = parseFloat(t);
+      return Number.isNaN(v) ? null : v;
+    }
+
+    function parseMeasurement(raw) {
+      const src = String(raw || "").trim();
+      if (!src) return null;
+      const cleaned = src.replace(/~/g, "").trim();
+
+      if (cleaned.startsWith(">") || cleaned.startsWith("<")) {
+        const dir = cleaned[0];
+        const base = parseNumberToken(cleaned.slice(1).trim());
+        if (base == null) return null;
+        const span = 0.125;
+        const min = dir === ">" ? base : base - span;
+        const max = dir === ">" ? base + span : base;
+        return {
+          raw: src,
+          min,
+          max,
+          mean: (min + max) / 2,
+          unc: Math.abs(max - min) / 2
+        };
+      }
+
+      if (cleaned.includes("-")) {
+        const [a, b] = cleaned.split("-").map(s => s.trim());
+        const av = parseNumberToken(a);
+        const bv = parseNumberToken(b);
+        if (av == null || bv == null) return null;
+        const min = Math.min(av, bv);
+        const max = Math.max(av, bv);
+        return {
+          raw: src,
+          min,
+          max,
+          mean: (min + max) / 2,
+          unc: Math.abs(max - min) / 2
+        };
+      }
+
+      const v = parseNumberToken(cleaned);
+      if (v == null) return null;
+      return { raw: src, min: v, max: v, mean: v, unc: 0 };
+    }
+
+    function median(values) {
+      if (!values.length) return 0;
+      const sorted = [...values].sort((a, b) => a - b);
+      const mid = Math.floor(sorted.length / 2);
+      return sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
+    }
+
+    function joistCoordinate(sectionKey, joist) {
+      const section = HOUSE.sections[sectionKey];
+      const idx = section.joists.indexOf(joist);
+      if (idx < 0) return null;
+
+      const spacing = 16 / 12;
+      const span = (section.joists.length - 1) * spacing;
+      const along = section.rowAxis === "x" ? section.width : section.height;
+      const margin = (along - span) / 2;
+      return margin + idx * spacing;
+    }
+
+    function localPosition(sectionKey, joist, posKey, setupName = "") {
+      const section = HOUSE.sections[sectionKey];
+      const alongRows = joistCoordinate(sectionKey, joist);
+      if (alongRows == null) return null;
+      const posMeta = section.positions[posKey];
+      if (!posMeta) return null;
+
+      let lx = 0;
+      let ly = 0;
+
+      if (section.rowAxis === "y") {
+        ly = alongRows;
+        lx = posMeta.axis === "x" ? posMeta.value : section.width / 2;
+      } else {
+        lx = alongRows;
+        ly = posMeta.axis === "y" ? posMeta.value : section.height / 2;
+      }
+
+      // Main "near stairs" readings from Tare 1 are offset about 3 ft to the right
+      // relative to the current near-sun-room baseline placement.
+      if (sectionKey === "main" && posKey === "nearStairs" && setupName === "Tare 1") {
+        lx = Math.min(section.width - 0.5, lx + 3);
+      }
+
+      return { x: section.x + lx, y: section.y + ly, lx, ly };
+    }
+
+    function buildPoints() {
+      const built = [];
+      let index = 0;
+
+      for (const setup of RAW_DATA) {
+        const tare = parseMeasurement(setup.tareRaw);
+        if (!tare) continue;
+
+        for (const [sectionKey, rows] of Object.entries(setup.sectionRows)) {
+          const section = HOUSE.sections[sectionKey];
+          if (!section) continue;
+
+          for (const row of rows) {
+            const joist = row.joist;
+            for (const [k, v] of Object.entries(row)) {
+              if (k === "joist") continue;
+              if (!v || !String(v).trim()) continue;
+              const reading = parseMeasurement(v);
+              if (!reading) continue;
+
+              const pos = localPosition(sectionKey, joist, k, setup.setup);
+              if (!pos) continue;
+
+              const deviationRaw = tare.mean - reading.mean;
+              const unc = Math.sqrt((tare.unc * tare.unc) + (reading.unc * reading.unc));
+
+              built.push({
+                id: `pt-${index++}`,
+                setup: setup.setup,
+                tareRaw: setup.tareRaw,
+                tareLocation: setup.tareLocation,
+                section: sectionKey,
+                sectionName: section.name,
+                joist,
+                posKey: k,
+                posLabel: section.positions[k] ? section.positions[k].label : k,
+                raw: String(v),
+                reading,
+                tare,
+                x: pos.x,
+                y: pos.y,
+                lx: pos.lx,
+                ly: pos.ly,
+                deviationRaw,
+                deviation: deviationRaw,
+                uncertainty: unc,
+                logicalKey: `${sectionKey}|${joist}|${k}`,
+                doubled: joist.length > 1 && joist[0] === joist[1]
+              });
+            }
+          }
+        }
+      }
+
+      const grouped = new Map();
+      for (const p of built) {
+        if (!grouped.has(p.logicalKey)) grouped.set(p.logicalKey, []);
+        grouped.get(p.logicalKey).push(p);
+      }
+
+      const overlaps = [];
+      for (const arr of grouped.values()) {
+        const a = arr.find(v => v.setup === "Tare 1");
+        const b = arr.find(v => v.setup === "Tare 2");
+        if (a && b) overlaps.push(a.deviationRaw - b.deviationRaw);
+      }
+
+      const autoOffset = median(overlaps);
+      const userOffset = parseFloat(offsetInput.value);
+      const finalOffset = autoOffset + userOffset;
+
+      for (const p of built) {
+        if (p.setup === "Tare 2") {
+          p.deviation = p.deviationRaw + finalOffset;
+        } else {
+          p.deviation = p.deviationRaw;
+        }
+      }
+
+      return { built, autoOffset, overlapCount: overlaps.length };
+    }
+
+    function makeTransform(width, height) {
+      // Larger pad leaves room for external labels and boundary callouts.
+      const pad = 36;
+      const sx = (width - pad * 2) / HOUSE.bounds.width;
+      const sy = (height - pad * 2) / HOUSE.bounds.height;
+      const scale = Math.min(sx, sy);
+      const xOffset = (width - (HOUSE.bounds.width * scale)) / 2;
+      const yOffset = (height - (HOUSE.bounds.height * scale)) / 2;
+
+      return {
+        scale,
+        toScreen(x, y) {
+          return {
+            x: xOffset + x * scale,
+            y: yOffset + y * scale
+          };
+        },
+        toWorld(px, py) {
+          return {
+            x: (px - xOffset) / scale,
+            y: (py - yOffset) / scale
+          };
+        },
+        xOffset,
+        yOffset
+      };
+    }
+
+    function inSection(x, y, section) {
+      return x >= section.x && x <= section.x + section.width && y >= section.y && y <= section.y + section.height;
+    }
+
+    function pointInsideHouse(x, y) {
+      return Object.values(HOUSE.sections).some(sec => inSection(x, y, sec));
+    }
+
+    function idw(x, y, pwr, samplePoints) {
+      let num = 0;
+      let den = 0;
+      for (const p of samplePoints) {
+        const dx = x - p.x;
+        const dy = y - p.y;
+        const d = Math.sqrt((dx * dx) + (dy * dy));
+        if (d < 0.02) return p.deviation;
+        const w = 1 / Math.pow(d, pwr);
+        num += p.deviation * w;
+        den += w;
+      }
+      return den ? num / den : 0;
+    }
+
+    function getDeviationRange(samplePoints) {
+      let min = Infinity;
+      let max = -Infinity;
+      for (const p of samplePoints) {
+        if (p.deviation < min) min = p.deviation;
+        if (p.deviation > max) max = p.deviation;
+      }
+      if (!Number.isFinite(min) || !Number.isFinite(max)) {
+        min = -1;
+        max = 1;
+      }
+      if (Math.abs(max - min) < 0.001) {
+        max += 0.5;
+        min -= 0.5;
+      }
+      return { min, max };
+    }
+
+    function lerp(a, b, t) {
+      return a + (b - a) * t;
+    }
+
+    function colorFor(value, min, max, alpha = 1) {
+      const t = Math.max(0, Math.min(1, (value - min) / (max - min)));
+      const c1 = [31, 74, 135];
+      const c2 = [82, 179, 217];
+      const c3 = [255, 239, 169];
+      const c4 = [210, 75, 54];
+
+      let cA = c1;
+      let cB = c2;
+      let lt = t / 0.33;
+      if (t > 0.33 && t <= 0.66) {
+        cA = c2;
+        cB = c3;
+        lt = (t - 0.33) / 0.33;
+      } else if (t > 0.66) {
+        cA = c3;
+        cB = c4;
+        lt = (t - 0.66) / 0.34;
+      }
+
+      const r = Math.round(lerp(cA[0], cB[0], Math.max(0, Math.min(1, lt))));
+      const g = Math.round(lerp(cA[1], cB[1], Math.max(0, Math.min(1, lt))));
+      const b = Math.round(lerp(cA[2], cB[2], Math.max(0, Math.min(1, lt))));
+      return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+    }
+
+    function drawHeatmap() {
+      const rect = mapWrap.getBoundingClientRect();
+      const w = Math.max(500, Math.floor(rect.width));
+      const h = Math.max(320, Math.floor(rect.height));
+      heatCanvas.width = w;
+      heatCanvas.height = h;
+      overlaySvg.setAttribute("viewBox", `0 0 ${w} ${h}`);
+      overlaySvg.setAttribute("width", String(w));
+      overlaySvg.setAttribute("height", String(h));
+
+      const pwr = parseFloat(powerInput.value);
+      const opacity = parseFloat(opacityInput.value);
+      const tf = makeTransform(w, h);
+      const { min, max } = getDeviationRange(points);
+
+      const ctx = heatCanvas.getContext("2d");
+      ctx.clearRect(0, 0, w, h);
+
+      const step = 2;
+      for (let py = 0; py < h; py += step) {
+        for (let px = 0; px < w; px += step) {
+          const world = tf.toWorld(px, py);
+          if (!pointInsideHouse(world.x, world.y)) continue;
+          const z = idw(world.x, world.y, pwr, points);
+          ctx.fillStyle = colorFor(z, min, max, opacity);
+          ctx.fillRect(px, py, step, step);
+        }
+      }
+
+      drawOverlay(tf, min, max);
+      drawSurface3D();
+    }
+
+    function clearChildren(node) {
+      while (node.firstChild) node.removeChild(node.firstChild);
+    }
+
+    function mkSvg(tag, attrs = {}) {
+      const el = document.createElementNS("http://www.w3.org/2000/svg", tag);
+      for (const [k, v] of Object.entries(attrs)) {
+        el.setAttribute(k, String(v));
+      }
+      return el;
+    }
+
+    function drawOverlay(tf, min, max) {
+      clearChildren(overlaySvg);
+
+      const sectionVariation = getSectionVariations();
+
+      const p0 = tf.toScreen(0, 0);
+      const p1 = tf.toScreen(36, 0);
+      const p2 = tf.toScreen(36, 29);
+      const p3 = tf.toScreen(18, 29);
+      const p4 = tf.toScreen(18, 39);
+      const p5 = tf.toScreen(0, 39);
+      const houseOutlinePath = `M ${p0.x} ${p0.y} L ${p1.x} ${p1.y} L ${p2.x} ${p2.y} L ${p3.x} ${p3.y} L ${p4.x} ${p4.y} L ${p5.x} ${p5.y} Z`;
+
+      const bg = mkSvg("path", {
+        d: houseOutlinePath,
+        fill: "rgba(255,255,255,0.16)",
+        stroke: "#202020",
+        "stroke-width": 1.2
+      });
+      overlaySvg.appendChild(bg);
+
+      for (const [key, section] of Object.entries(HOUSE.sections)) {
+        const a = tf.toScreen(section.x, section.y);
+        const b = tf.toScreen(section.x + section.width, section.y + section.height);
+        const rect = mkSvg("rect", {
+          x: a.x,
+          y: a.y,
+          width: b.x - a.x,
+          height: b.y - a.y,
+          fill: section.fill,
+          stroke: "#2d2a25",
+          "stroke-width": 1.3
+        });
+        overlaySvg.appendChild(rect);
+
+        drawSectionJoists(key, tf);
+        drawSectionOutsideLabel(key, section, tf, sectionVariation[key] || 0);
+      }
+
+      for (const p of points) {
+        const s = tf.toScreen(p.x, p.y);
+        const c = mkSvg("circle", {
+          cx: s.x,
+          cy: s.y,
+          r: p.doubled ? 4.9 : 4.1,
+          fill: colorFor(p.deviation, min, max, 0.98),
+          stroke: "#fff",
+          "stroke-width": 1,
+          "data-id": p.id,
+          "data-base-r": p.doubled ? 4.9 : 4.1,
+          style: "cursor: pointer;"
+        });
+
+        c.addEventListener("mouseenter", ev => {
+          setActivePoint(p.id, ev.clientX, ev.clientY);
+        });
+        c.addEventListener("mousemove", ev => {
+          showTooltipForPoint(p, ev.clientX, ev.clientY);
+        });
+        c.addEventListener("mouseleave", () => {
+          clearActivePoint();
+        });
+
+        overlaySvg.appendChild(c);
+      }
+
+      drawBoundaryDifferenceLabels(tf);
+
+      drawExtremaAnnotations(tf);
+    }
+
+    function getSectionCenterSummary(sectionKey) {
+      const sectionPoints = points.filter(p => p.section === sectionKey);
+      if (!sectionPoints.length) {
+        return { mean: 0, median: 0, count: 0 };
+      }
+      const vals = sectionPoints.map(p => p.deviation);
+      const mean = vals.reduce((acc, v) => acc + v, 0) / vals.length;
+      const med = median(vals);
+      return { mean, median: med, count: vals.length };
+    }
+
+    function drawBoundaryDifferenceLabels(tf) {
+      const main = getSectionCenterSummary("main");
+      const add = getSectionCenterSummary("addition");
+      const kitchen = getSectionCenterSummary("kitchen");
+
+      const pairs = [
+        {
+          text: `Main<->Addition (${Math.abs(main.mean - add.mean).toFixed(2)}\")`,
+          worldX: 18,
+          worldY: 0,
+          dx: 0,
+          dy: -18,
+          align: "middle"
+        },
+        {
+          text: `Main<->Kitchen (${Math.abs(main.mean - kitchen.mean).toFixed(2)}\")`,
+          worldX: 9,
+          worldY: 29,
+          dx: -42,
+          dy: -10
+        }
+      ];
+
+      for (const pair of pairs) {
+        const anchor = tf.toScreen(pair.worldX, pair.worldY);
+        const tx = anchor.x + pair.dx;
+        const ty = anchor.y + pair.dy;
+
+        const txt = mkSvg("text", {
+          x: tx,
+          y: ty,
+          "font-size": 10,
+          "font-weight": 700,
+          "text-anchor": pair.align === "middle" ? "middle" : "start",
+          fill: "#111",
+          "pointer-events": "none"
+        });
+        txt.textContent = pair.text;
+
+        overlaySvg.appendChild(txt);
+        const bb = txt.getBBox();
+        const box = mkSvg("rect", {
+          x: bb.x - 4,
+          y: bb.y - 2,
+          width: bb.width + 8,
+          height: bb.height + 4,
+          rx: 3,
+          ry: 3,
+          fill: "rgba(255,255,255,0.9)",
+          stroke: "#1e1e1e",
+          "stroke-width": 0.7,
+          "pointer-events": "none"
+        });
+        overlaySvg.insertBefore(box, txt);
+
+        const line = mkSvg("line", {
+          x1: anchor.x,
+          y1: anchor.y,
+          x2: Math.max(bb.x, Math.min(anchor.x, bb.x + bb.width)),
+          y2: bb.y + (bb.height / 2),
+          stroke: "#2c2c2c",
+          "stroke-width": 0.8,
+          "pointer-events": "none"
+        });
+        overlaySvg.insertBefore(line, box);
+      }
+    }
+
+    function getSectionVariations() {
+      const out = {};
+      for (const [sectionKey] of Object.entries(HOUSE.sections)) {
+        const sectionPoints = points.filter(p => p.section === sectionKey);
+        if (!sectionPoints.length) {
+          out[sectionKey] = 0;
+          continue;
+        }
+        let minV = sectionPoints[0].deviation;
+        let maxV = sectionPoints[0].deviation;
+        for (const p of sectionPoints) {
+          if (p.deviation < minV) minV = p.deviation;
+          if (p.deviation > maxV) maxV = p.deviation;
+        }
+        out[sectionKey] = maxV - minV;
+      }
+      return out;
+    }
+
+    function drawSectionOutsideLabel(sectionKey, section, tf, variation) {
+      const a = tf.toScreen(section.x, section.y);
+      const b = tf.toScreen(section.x + section.width, section.y + section.height);
+      const baseName = section.name.replace(" (A1)", "").replace(" (A2)", "");
+      const labelText = `${baseName} (${variation.toFixed(2)}\" variation)`;
+
+      if (sectionKey === "main") {
+        const x = a.x - 16;
+        const y = (a.y + b.y) / 2;
+        const leader = mkSvg("line", {
+          x1: a.x,
+          y1: y,
+          x2: a.x - 8,
+          y2: y,
+          stroke: "#242424",
+          "stroke-width": 1.1
+        });
+        overlaySvg.appendChild(leader);
+
+        const txt = mkSvg("text", {
+          x,
+          y,
+          "text-anchor": "middle",
+          "font-size": 12,
+          "font-weight": 700,
+          fill: "#191919",
+          transform: `rotate(-90 ${x} ${y})`
+        });
+        txt.textContent = labelText;
+        overlaySvg.appendChild(txt);
+        return;
+      }
+
+      if (sectionKey === "addition") {
+        const x = b.x + 16;
+        const y = (a.y + b.y) / 2;
+        const leader = mkSvg("line", {
+          x1: b.x,
+          y1: y,
+          x2: b.x + 8,
+          y2: y,
+          stroke: "#242424",
+          "stroke-width": 1.1
+        });
+        overlaySvg.appendChild(leader);
+
+        const txt = mkSvg("text", {
+          x,
+          y,
+          "text-anchor": "middle",
+          "font-size": 12,
+          "font-weight": 700,
+          fill: "#191919",
+          transform: `rotate(90 ${x} ${y})`
+        });
+        txt.textContent = labelText;
+        overlaySvg.appendChild(txt);
+        return;
+      }
+
+      const x = (a.x + b.x) / 2;
+      const y = b.y + 18;
+      const leader = mkSvg("line", {
+        x1: x,
+        y1: b.y,
+        x2: x,
+        y2: b.y + 8,
+        stroke: "#242424",
+        "stroke-width": 1.1
+      });
+      overlaySvg.appendChild(leader);
+
+      const txt = mkSvg("text", {
+        x,
+        y,
+        "text-anchor": "middle",
+        "font-size": 12,
+        "font-weight": 700,
+        fill: "#191919"
+      });
+      txt.textContent = labelText;
+      overlaySvg.appendChild(txt);
+    }
+
+    function getExtremaSummary() {
+      if (!points.length) {
+        return {
+          globalMin: null,
+          globalMax: null,
+          bySection: {}
+        };
+      }
+
+      let globalMin = points[0];
+      let globalMax = points[0];
+      for (const p of points) {
+        if (p.deviation < globalMin.deviation) globalMin = p;
+        if (p.deviation > globalMax.deviation) globalMax = p;
+      }
+
+      const bySection = {};
+      for (const [sectionKey] of Object.entries(HOUSE.sections)) {
+        const sectionPoints = points.filter(p => p.section === sectionKey);
+        if (!sectionPoints.length) continue;
+        let minP = sectionPoints[0];
+        let maxP = sectionPoints[0];
+        for (const p of sectionPoints) {
+          if (p.deviation < minP.deviation) minP = p;
+          if (p.deviation > maxP.deviation) maxP = p;
+        }
+        bySection[sectionKey] = { min: minP, max: maxP };
+      }
+
+      return { globalMin, globalMax, bySection };
+    }
+
+    function drawExtremaAnnotations(tf) {
+      const extrema = getExtremaSummary();
+      const tagByPointId = new Map();
+
+      function addTag(point, tag) {
+        if (!point) return;
+        if (!tagByPointId.has(point.id)) tagByPointId.set(point.id, { point, tags: [] });
+        tagByPointId.get(point.id).tags.push(tag);
+      }
+
+      addTag(extrema.globalMax, "G-Max");
+      addTag(extrema.globalMin, "G-Min");
+
+      for (const [sectionKey, ex] of Object.entries(extrema.bySection)) {
+        const name = HOUSE.sections[sectionKey].name.replace(" (A1)", "").replace(" (A2)", "");
+        addTag(ex.max, `${name}-Max`);
+        addTag(ex.min, `${name}-Min`);
+      }
+
+      for (const entry of tagByPointId.values()) {
+        const p = entry.point;
+        const s = tf.toScreen(p.x, p.y);
+
+        const ring = mkSvg("circle", {
+          cx: s.x,
+          cy: s.y,
+          r: 8.2,
+          fill: "none",
+          stroke: "#111",
+          "stroke-width": 1.4,
+          "stroke-dasharray": "2 2",
+          "pointer-events": "none"
+        });
+        overlaySvg.appendChild(ring);
+
+        const labelText = `${p.deviation.toFixed(2)}\"`;
+        const lx = s.x + 10;
+        const ly = s.y - 18;
+
+        const txt = mkSvg("text", {
+          x: lx,
+          y: ly,
+          "font-size": 9.2,
+          fill: "#111",
+          "font-weight": 600,
+          "pointer-events": "none"
+        });
+        txt.textContent = labelText;
+
+        // Measure rendered text so label box can hug content tightly.
+        overlaySvg.appendChild(txt);
+        const bb = txt.getBBox();
+        const padX = 4;
+        const padY = 2;
+
+        const box = mkSvg("rect", {
+          x: bb.x - padX,
+          y: bb.y - padY,
+          width: bb.width + (padX * 2),
+          height: bb.height + (padY * 2),
+          rx: 3,
+          ry: 3,
+          fill: "rgba(255,255,255,0.88)",
+          stroke: "#1e1e1e",
+          "stroke-width": 0.8,
+          "pointer-events": "none"
+        });
+        overlaySvg.insertBefore(box, txt);
+      }
+    }
+
+    function drawSectionJoists(sectionKey, tf) {
+      const section = HOUSE.sections[sectionKey];
+      const joistWidthFt = 2 / 12;
+
+      for (const joist of section.joists) {
+        const along = joistCoordinate(sectionKey, joist);
+        if (along == null) continue;
+        const doubled = joist.length > 1 && joist[0] === joist[1];
+        const width = joistWidthFt * tf.scale * (doubled ? 2 : 1);
+
+        if (section.rowAxis === "y") {
+          const y = tf.toScreen(0, section.y + along).y;
+          const x1 = tf.toScreen(section.x, 0).x;
+          const x2 = tf.toScreen(section.x + section.width, 0).x;
+          const line = mkSvg("line", {
+            x1,
+            y1: y,
+            x2,
+            y2: y,
+            stroke: "rgba(32, 32, 32, 0.45)",
+            "stroke-width": Math.max(1.1, width)
+          });
+          overlaySvg.appendChild(line);
+
+          const tx = x1 + 5;
+          const ty = y - 3;
+          const label = mkSvg("text", {
+            x: tx,
+            y: ty,
+            "font-size": 9,
+            fill: "#3b3b3b"
+          });
+          label.textContent = joist;
+          overlaySvg.appendChild(label);
+        } else {
+          const x = tf.toScreen(section.x + along, 0).x;
+          const y1 = tf.toScreen(0, section.y).y;
+          const y2 = tf.toScreen(0, section.y + section.height).y;
+          const line = mkSvg("line", {
+            x1: x,
+            y1,
+            x2: x,
+            y2,
+            stroke: "rgba(32, 32, 32, 0.45)",
+            "stroke-width": Math.max(1.1, width)
+          });
+          overlaySvg.appendChild(line);
+
+          const tx = x - 4;
+          const ty = y1 + 10;
+          const label = mkSvg("text", {
+            x: tx,
+            y: ty,
+            "font-size": 9,
+            fill: "#3b3b3b"
+          });
+          label.textContent = joist;
+          overlaySvg.appendChild(label);
+        }
+      }
+    }
+
+    function makeLocationString(p) {
+      return `${p.sectionName} | Joist ${p.joist} | ${p.posLabel}`;
+    }
+
+    function showTooltipForPoint(p, clientX, clientY) {
+      tooltip.style.display = "block";
+      tooltip.textContent = `dev ${p.deviation.toFixed(3)}\"`;
+
+      const pad = 10;
+      const dx = 12;
+      const dy = 14;
+      const ttRect = tooltip.getBoundingClientRect();
+
+      let left = clientX + dx;
+      let top = clientY + dy;
+
+      if (left + ttRect.width + pad > window.innerWidth) {
+        left = clientX - ttRect.width - dx;
+      }
+      if (top + ttRect.height + pad > window.innerHeight) {
+        top = clientY - ttRect.height - dy;
+      }
+      if (left < pad) left = pad;
+      if (top < pad) top = pad;
+
+      tooltip.style.left = `${left}px`;
+      tooltip.style.top = `${top}px`;
+    }
+
+    function hideTooltip() {
+      tooltip.style.display = "none";
+    }
+
+    function scrollRowIntoTableView(row) {
+      if (!tableWrap || !row) return;
+      const margin = 14;
+      const rowTop = row.offsetTop;
+      const rowBottom = rowTop + row.offsetHeight;
+      const viewTop = tableWrap.scrollTop;
+      const viewBottom = viewTop + tableWrap.clientHeight;
+
+      if (rowTop - margin < viewTop) {
+        tableWrap.scrollTo({
+          top: Math.max(0, rowTop - margin),
+          behavior: "smooth"
+        });
+      } else if (rowBottom + margin > viewBottom) {
+        tableWrap.scrollTo({
+          top: Math.max(0, rowBottom + margin - tableWrap.clientHeight),
+          behavior: "smooth"
+        });
+      }
+    }
+
+    function setActivePoint(pointId, clientX = null, clientY = null, scrollTable = true) {
+      activePointId = pointId;
+
+      const circles = overlaySvg.querySelectorAll("circle[data-id]");
+      circles.forEach(c => {
+        const id = c.getAttribute("data-id");
+        const baseR = parseFloat(c.getAttribute("data-base-r") || "4");
+        if (id === pointId) {
+          c.setAttribute("r", String(baseR + 2.7));
+          c.setAttribute("stroke", "#101010");
+          c.setAttribute("stroke-width", "1.5");
+        } else {
+          c.setAttribute("r", String(baseR));
+          c.setAttribute("stroke", "#fff");
+          c.setAttribute("stroke-width", "1");
+        }
+      });
+
+      const rows = measureBody.querySelectorAll("tr[data-id]");
+      rows.forEach(row => {
+        if (row.getAttribute("data-id") === pointId) {
+          row.classList.add("active");
+          if (scrollTable) scrollRowIntoTableView(row);
+        } else {
+          row.classList.remove("active");
+        }
+      });
+
+      const p = points.find(v => v.id === pointId);
+      if (p && clientX != null && clientY != null) {
+        showTooltipForPoint(p, clientX, clientY);
+      }
+    }
+
+    function clearActivePoint() {
+      activePointId = null;
+      const circles = overlaySvg.querySelectorAll("circle[data-id]");
+      circles.forEach(c => {
+        const baseR = parseFloat(c.getAttribute("data-base-r") || "4");
+        c.setAttribute("r", String(baseR));
+        c.setAttribute("stroke", "#fff");
+        c.setAttribute("stroke-width", "1");
+      });
+
+      const rows = measureBody.querySelectorAll("tr[data-id]");
+      rows.forEach(row => row.classList.remove("active"));
+      hideTooltip();
+    }
+
+    function buildTable() {
+      clearChildren(measureBody);
+      points.forEach((p, idx) => {
+        const tr = document.createElement("tr");
+        tr.setAttribute("data-id", p.id);
+        tr.innerHTML = `
+          <td>${idx + 1}</td>
+          <td>${p.setup}</td>
+          <td>${p.sectionName}</td>
+          <td>${p.joist}</td>
+          <td>${p.posLabel}</td>
+          <td>${p.raw}</td>
+          <td>${p.reading.mean.toFixed(3)}</td>
+          <td>${p.deviation.toFixed(3)}</td>
+          <td>${p.uncertainty.toFixed(3)}</td>
+          <td>${p.x.toFixed(2)}</td>
+          <td>${p.y.toFixed(2)}</td>
+        `;
+
+        tr.addEventListener("mouseenter", () => {
+          setActivePoint(p.id, null, null, false);
+        });
+        tr.addEventListener("mouseleave", () => {
+          clearActivePoint();
+        });
+
+        measureBody.appendChild(tr);
+      });
+    }
+
+    function statsFor(arr) {
+      if (!arr.length) {
+        return {
+          mean: 0,
+          min: null,
+          max: null,
+          range: 0
+        };
+      }
+      let sum = 0;
+      let min = arr[0];
+      let max = arr[0];
+      for (const p of arr) {
+        sum += p.deviation;
+        if (p.deviation < min.deviation) min = p;
+        if (p.deviation > max.deviation) max = p;
+      }
+      return {
+        mean: sum / arr.length,
+        min,
+        max,
+        range: max.deviation - min.deviation
+      };
+    }
+
+    function buildSurfaceTriangles() {
+      projectedTriangles = [];
+      const pwr = parseFloat(powerInput.value);
+      const zScale = parseFloat(zScaleInput.value);
+
+      const gx = 64;
+      const gy = 70;
+      const verts = [];
+
+      for (let yi = 0; yi <= gy; yi++) {
+        const y = HOUSE.bounds.height * (yi / gy);
+        const row = [];
+        for (let xi = 0; xi <= gx; xi++) {
+          const x = HOUSE.bounds.width * (xi / gx);
+          if (!pointInsideHouse(x, y)) {
+            row.push(null);
+            continue;
+          }
+          const z = idw(x, y, pwr, points);
+          row.push({ x, y, z });
+        }
+        verts.push(row);
+      }
+
+      for (let yi = 0; yi < gy; yi++) {
+        for (let xi = 0; xi < gx; xi++) {
+          const v00 = verts[yi][xi];
+          const v10 = verts[yi][xi + 1];
+          const v01 = verts[yi + 1][xi];
+          const v11 = verts[yi + 1][xi + 1];
+
+          if (v00 && v10 && v11) projectedTriangles.push([v00, v10, v11]);
+          if (v00 && v11 && v01) projectedTriangles.push([v00, v11, v01]);
+        }
+      }
+
+      const center = {
+        x: HOUSE.bounds.width / 2,
+        y: HOUSE.bounds.height / 2
+      };
+
+      const cosY = Math.cos(viewState.ay);
+      const sinY = Math.sin(viewState.ay);
+      const cosX = Math.cos(viewState.ax);
+      const sinX = Math.sin(viewState.ax);
+
+      const projected = [];
+
+      for (const tri of projectedTriangles) {
+        const pts = [];
+        let depth = 0;
+        let avgZ = 0;
+        for (const v of tri) {
+          const x = v.x - center.x;
+          const y = (v.y - center.y) * -1;
+          const z = (v.z / 12) * zScale;
+
+          const x1 = x * cosY + z * sinY;
+          const z1 = -x * sinY + z * cosY;
+
+          const y2 = y * cosX - z1 * sinX;
+          const z2 = y * sinX + z1 * cosX;
+
+          pts.push({ x: x1, y: y2, z: z2, rawZ: v.z });
+          depth += z2;
+          avgZ += v.z;
+        }
+        projected.push({
+          pts,
+          depth: depth / 3,
+          avgZ: avgZ / 3
+        });
+      }
+
+      projected.sort((a, b) => a.depth - b.depth);
+      return projected;
+    }
+
+    function drawSurface3D() {
+      const w = surfaceCanvas.width;
+      const h = surfaceCanvas.height;
+      surfaceCtx.clearRect(0, 0, w, h);
+
+      const tris = buildSurfaceTriangles();
+      const { min, max } = getDeviationRange(points);
+
+      let minX = Infinity;
+      let maxX = -Infinity;
+      let minY = Infinity;
+      let maxY = -Infinity;
+
+      for (const tri of tris) {
+        for (const p of tri.pts) {
+          if (p.x < minX) minX = p.x;
+          if (p.x > maxX) maxX = p.x;
+          if (p.y < minY) minY = p.y;
+          if (p.y > maxY) maxY = p.y;
+        }
+      }
+
+      const spanX = Math.max(0.1, maxX - minX);
+      const spanY = Math.max(0.1, maxY - minY);
+      const baseScale = Math.min((w - 70) / spanX, (h - 36) / spanY);
+      const scale = baseScale * Math.max(0.35, Math.min(4.5, viewState.zoom));
+
+      const cx = w / 2;
+      const cy = h / 2;
+
+      surfaceCtx.lineWidth = 0.35;
+      for (const tri of tris) {
+        surfaceCtx.beginPath();
+        for (let i = 0; i < tri.pts.length; i++) {
+          const p = tri.pts[i];
+          const sx = cx + (p.x * scale);
+          const sy = cy - (p.y * scale);
+          if (i === 0) surfaceCtx.moveTo(sx, sy);
+          else surfaceCtx.lineTo(sx, sy);
+        }
+        surfaceCtx.closePath();
+        surfaceCtx.fillStyle = colorFor(tri.avgZ, min, max, 0.92);
+        surfaceCtx.fill();
+        surfaceCtx.strokeStyle = "rgba(30, 30, 30, 0.12)";
+        surfaceCtx.stroke();
+      }
+
+      surfaceCtx.fillStyle = "rgba(20, 20, 20, 0.75)";
+      surfaceCtx.font = "12px IBM Plex Mono";
+      surfaceCtx.fillText(`3D view: ${viewState.preset}`, 10, 18);
+      surfaceCtx.fillText(`drag: orbit | wheel: zoom | dbl-click: reset`, 10, 34);
+    }
+
+    function setViewPreset(name) {
+      viewState.preset = name;
+      if (name === "iso") {
+        viewState.ax = -0.78;
+        viewState.ay = -0.72;
+        viewState.zoom = 1;
+      } else if (name === "top") {
+        viewState.ax = 0;
+        viewState.ay = 0;
+        viewState.zoom = 1;
+      } else if (name === "sideX") {
+        viewState.ax = 0;
+        viewState.ay = -Math.PI / 2;
+        viewState.zoom = 1;
+      } else if (name === "sideY") {
+        viewState.ax = -Math.PI / 2;
+        viewState.ay = 0;
+        viewState.zoom = 1;
+      }
+      drawSurface3D();
+    }
+
+    function clamp(v, min, max) {
+      return Math.max(min, Math.min(max, v));
+    }
+
+    function wireSurfaceInteractions() {
+      surfaceCanvas.addEventListener("mousedown", ev => {
+        orbitState.dragging = true;
+        orbitState.lastX = ev.clientX;
+        orbitState.lastY = ev.clientY;
+      });
+
+      window.addEventListener("mouseup", () => {
+        orbitState.dragging = false;
+      });
+
+      window.addEventListener("mousemove", ev => {
+        if (!orbitState.dragging) return;
+        const dx = ev.clientX - orbitState.lastX;
+        const dy = ev.clientY - orbitState.lastY;
+        orbitState.lastX = ev.clientX;
+        orbitState.lastY = ev.clientY;
+
+        viewState.preset = "custom";
+        viewState.ay += dx * 0.008;
+        viewState.ax += dy * 0.008;
+        viewState.ax = clamp(viewState.ax, -Math.PI * 0.499, Math.PI * 0.499);
+        drawSurface3D();
+      });
+
+      surfaceCanvas.addEventListener("wheel", ev => {
+        ev.preventDefault();
+        const factor = Math.exp(-ev.deltaY * 0.0012);
+        viewState.zoom = clamp(viewState.zoom * factor, 0.35, 4.5);
+        viewState.preset = "custom";
+        drawSurface3D();
+      }, { passive: false });
+
+      surfaceCanvas.addEventListener("dblclick", () => {
+        setViewPreset("iso");
+      });
+
+      surfaceCanvas.addEventListener("mouseleave", () => {
+        orbitState.dragging = false;
+      });
+    }
+
+    function refreshLabels(autoOffset) {
+      opacityLabel.textContent = parseFloat(opacityInput.value).toFixed(2);
+      powerLabel.textContent = parseFloat(powerInput.value).toFixed(1);
+      zScaleLabel.textContent = `${parseFloat(zScaleInput.value).toFixed(1)}x`;
+      const eff = autoOffset + parseFloat(offsetInput.value);
+      offsetLabel.textContent = `${eff.toFixed(3)}\"`;
+    }
+
+    function rebuild() {
+      const builtInfo = buildPoints();
+      points = builtInfo.built;
+      refreshLabels(builtInfo.autoOffset);
+      buildTable();
+      drawHeatmap();
+    }
+
+    opacityInput.addEventListener("input", rebuild);
+    powerInput.addEventListener("input", rebuild);
+    zScaleInput.addEventListener("input", () => {
+      refreshLabels(0);
+      drawSurface3D();
+    });
+    offsetInput.addEventListener("input", rebuild);
+
+    window.addEventListener("resize", drawHeatmap);
+
+    document.querySelectorAll("button[data-view]").forEach(btn => {
+      btn.addEventListener("click", () => setViewPreset(btn.getAttribute("data-view")));
+    });
+
+    wireSurfaceInteractions();
+    rebuild();
+    setViewPreset("iso");
+  </script>
+</body>
+</html>
